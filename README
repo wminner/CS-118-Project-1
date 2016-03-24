@@ -2,3 +2,12 @@ CS 118 - Project 1
 Wesley Minner
 Professor Reiher, Winter 2016
 
+Makefile functionality:
+* make
+* make clean
+
+server functionality:
+* exit: exit gracefully
+
+client functionality:
+* exit: exit gracefully

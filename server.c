@@ -17,6 +17,8 @@
 #define MAXMSGLEN 100000
 #define PORTNUM 9007
 
+
+
 void error(char *msg)
 {
     perror(msg);
@@ -28,6 +30,9 @@ int main(int argc, char *argv[])
     int sockfd, newsockfd, portno, pid;
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
+    FILE *fp;
+    fp = fopen("temp", "w");
+    ftruncate(fileno(fp), 0);
 
     // if (argc < 2) {
     //    fprintf(stderr,"ERROR, no port provided\n");
@@ -66,7 +71,10 @@ int main(int argc, char *argv[])
         //read client's message
         n = recv(newsockfd, buffer, sizeof(buffer)-1, 0);
         if (n < 0) error("ERROR reading from socket");
-        printf("Here is the message: %s\n",buffer);
+        printf("Here is the message: %s",buffer);
+        fp = fopen("temp", "a");
+        fwrite(buffer, strlen(buffer), 1, fp);
+        fclose(fp);
 
         //reply to client
         n = write(newsockfd,"I got your message",18);
@@ -78,10 +86,7 @@ int main(int argc, char *argv[])
             break;
         }
     }
-
- 
     close(sockfd);
-    
     return 0; 
 }
 
