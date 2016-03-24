@@ -14,6 +14,8 @@
 #include <signal.h>	/* signal name macros, and the kill() prototype */
 #include <unistd.h>
 
+#define MAXMSGLEN 100000
+#define PORTNUM 9007
 
 void error(char *msg)
 {
@@ -27,10 +29,10 @@ int main(int argc, char *argv[])
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
 
-    if (argc < 2) {
-       fprintf(stderr,"ERROR, no port provided\n");
-       exit(1);
-    }
+    // if (argc < 2) {
+    //    fprintf(stderr,"ERROR, no port provided\n");
+    //    exit(1);
+    // }
     sockfd = socket(AF_INET, SOCK_STREAM, 0);	//create socket
     if (sockfd < 0) 
         error("ERROR opening socket");
@@ -38,7 +40,8 @@ int main(int argc, char *argv[])
         error("setsockopt(SO_REUSEADDR) failed");
     memset((char *) &serv_addr, 0, sizeof(serv_addr));	//reset memory
     //fill in address info
-    portno = atoi(argv[1]);
+    //portno = atoi(argv[1]);
+    portno = PORTNUM;
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(portno);
@@ -56,26 +59,27 @@ int main(int argc, char *argv[])
             error("ERROR on accept");
            
         int n;
-        char buffer[256];
+        char buffer[MAXMSGLEN+1];
     	 
-        memset(buffer, 0, 256);	//reset memory
+        memset(buffer, 0, sizeof(buffer));	//reset memory
 
         //read client's message
-        n = read(newsockfd,buffer,255);
+        n = recv(newsockfd, buffer, sizeof(buffer)-1, 0);
         if (n < 0) error("ERROR reading from socket");
         printf("Here is the message: %s\n",buffer);
+
+        //reply to client
+        n = write(newsockfd,"I got your message",18);
+        if (n < 0) error("ERROR writing to socket");
+        close(newsockfd);//close connection
 
         if (strcmp(buffer, "exit\n") == 0) {
             printf("Exiting...\n");
             break;
         }
-
-        //reply to client
-        n = write(newsockfd,"I got your message",18);
-        if (n < 0) error("ERROR writing to socket");
     }
 
-    close(newsockfd);//close connection 
+ 
     close(sockfd);
     
     return 0; 
