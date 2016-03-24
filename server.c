@@ -33,7 +33,9 @@ int main(int argc, char *argv[])
     }
     sockfd = socket(AF_INET, SOCK_STREAM, 0);	//create socket
     if (sockfd < 0) 
-      error("ERROR opening socket");
+        error("ERROR opening socket");
+    if (setsockopt(sockfd, SOL_SOCKET, (SO_REUSEADDR|SO_REUSEPORT), &(int){ 1 }, sizeof(int)) < 0)
+        error("setsockopt(SO_REUSEADDR) failed");
     memset((char *) &serv_addr, 0, sizeof(serv_addr));	//reset memory
     //fill in address info
     portno = atoi(argv[1]);
@@ -41,36 +43,41 @@ int main(int argc, char *argv[])
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(portno);
 
-    if (bind(sockfd, (struct sockaddr *) &serv_addr,
-            sizeof(serv_addr)) < 0) 
-            error("ERROR on binding");
+    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) 
+        error("ERROR on binding");
 
     listen(sockfd,5);	//5 simultaneous connection at most
 
-    //accept connections
-    newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
-       
-    if (newsockfd < 0) 
-     error("ERROR on accept");
-       
-    int n;
-     char buffer[256];
-    		 
-     memset(buffer, 0, 256);	//reset memory
+    while(1) {
+        //accept connections
+        newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
+           
+        if (newsockfd < 0) 
+            error("ERROR on accept");
+           
+        int n;
+        char buffer[256];
+    	 
+        memset(buffer, 0, 256);	//reset memory
 
-     //read client's message
-     n = read(newsockfd,buffer,255);
-     if (n < 0) error("ERROR reading from socket");
-     printf("Here is the message: %s\n",buffer);
-     
-     //reply to client
-     n = write(newsockfd,"I got your message",18);
-     if (n < 0) error("ERROR writing to socket");
-       
+        //read client's message
+        n = read(newsockfd,buffer,255);
+        if (n < 0) error("ERROR reading from socket");
+        printf("Here is the message: %s\n",buffer);
+
+        if (strcmp(buffer, "exit\n") == 0) {
+            printf("Exiting...\n");
+            break;
+        }
+
+        //reply to client
+        n = write(newsockfd,"I got your message",18);
+        if (n < 0) error("ERROR writing to socket");
+    }
 
     close(newsockfd);//close connection 
     close(sockfd);
-       
+    
     return 0; 
 }
 
