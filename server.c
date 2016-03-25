@@ -38,25 +38,27 @@ int main(int argc, char *argv[])
     int namelen = 0;
     int fname_pos;
 
-    fp = fopen("temp", "w");
+    // Open and clear temp file for logging HTTP requests
+    fp = fopen("log_server", "w");
     ftruncate(fileno(fp), 0);
 
-    // if (argc < 2) {
-    //    fprintf(stderr,"ERROR, no port provided\n");
-    //    exit(1);
-    // }
+    // Usage
     if (argc > 1) {
         fprintf(stderr, "%s accets no additional arguements.\n", argv[0]);
         exit(1);
     }
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);	//create socket
+
+    // Create socket
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);	
     if (sockfd < 0) 
         error("ERROR opening socket");
     if (setsockopt(sockfd, SOL_SOCKET, (SO_REUSEADDR|SO_REUSEPORT), &(int){ 1 }, sizeof(int)) < 0)
         error("setsockopt(SO_REUSEADDR) failed");
-    memset((char *) &serv_addr, 0, sizeof(serv_addr));	//reset memory
-    //fill in address info
-    //portno = atoi(argv[1]);
+
+    // Reset memory
+    memset((char *) &serv_addr, 0, sizeof(serv_addr));	
+    
+    // Fill in address info
     portno = PORTNUM;
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
@@ -65,7 +67,7 @@ int main(int argc, char *argv[])
     if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) 
         error("ERROR on binding");
 
-    listen(sockfd,5);	//5 simultaneous connection at most
+    listen(sockfd,5);	// 5 simultaneous connection at most
 
     while(1) {
         // Accept connections
@@ -73,11 +75,12 @@ int main(int argc, char *argv[])
            
         if (newsockfd < 0) 
             error("ERROR on accept");
-           
+
         int n;
         char buffer[MAXMSGLEN+1];
-    	 
-        memset(buffer, 0, sizeof(buffer));	// Reset memory
+
+        // Reset memory
+        memset(buffer, 0, sizeof(buffer));	
 
         // Read client's message
         n = recv(newsockfd, buffer, sizeof(buffer)-1, 0);
@@ -86,14 +89,14 @@ int main(int argc, char *argv[])
         printf("Here is the message: %s",buffer);
 
         // Log HTTP requests (DEBUG)
-        fp = fopen("temp", "a");
+        fp = fopen("log_server", "a");
         fwrite(buffer, strlen(buffer), 1, fp);
         fclose(fp);
 
         // Find filename
         fname_pos = parseFilename(buffer, &namelen);
         if (fname_pos < 0)
-            error("Bad request");
+            fprintf(stderr, "ERROR bad request\n");
         else {
             // Print filename found (DEBUG)
             filename = (char*) calloc(namelen+1, sizeof(char));
@@ -130,7 +133,7 @@ int main(int argc, char *argv[])
 
 // Find requested filename in HTTP header
 // Returns position of filename and passes back length of the file name
-// Returns < 0 on fail
+// Returns -1 on fail
 int parseFilename(char *buffer, int *namelen) {
     int i;
     for (i = 0; i < MAXMSGLEN; i++) {
