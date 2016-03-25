@@ -11,6 +11,7 @@
 #include <strings.h>
 #include <string.h>
 #include <sys/wait.h>	/* for the waitpid() system call */
+#include <sys/stat.h>
 #include <signal.h>	/* signal name macros, and the kill() prototype */
 #include <unistd.h>
 
@@ -18,7 +19,9 @@
 #define PORTNUM 9007
 
 // Prototypes
-int parseFilename(char *buffer, int *namelen);
+int findFilename(char *buffer, int *namelen);
+int getContentType(char *filename, char *ctype);
+long long getContentLength(char *filename);
 
 // END Prototypes
 
@@ -33,10 +36,12 @@ int main(int argc, char *argv[])
     int sockfd, newsockfd, portno; //pid;
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
-    FILE *fp;
-    char *filename = NULL;
-    int namelen = 0;
-    int fname_pos;
+    FILE *fp;               // File pointer for logging HTTP requests
+    char *filename = NULL;  // Name of file requested
+    char *ctype = NULL;     // Content-Type
+    long long clen = 0;     // Content-Length
+    int fname_pos;          // Position of filename in HTTP header
+    int namelen = 0;        // Length of filename
 
     // Open and clear temp file for logging HTTP requests
     fp = fopen("log_server", "w");
@@ -94,17 +99,34 @@ int main(int argc, char *argv[])
         fclose(fp);
 
         // Find filename
-        fname_pos = parseFilename(buffer, &namelen);
-        if (fname_pos < 0)
+        fname_pos = findFilename(buffer, &namelen);
+        if (fname_pos < 0) {
             fprintf(stderr, "ERROR bad request\n");
-        else {
-            // Print filename found (DEBUG)
-            filename = (char*) calloc(namelen+1, sizeof(char));
-            strncpy(filename, buffer+fname_pos, namelen);
-            filename[namelen] = '\0';
-            printf("Filename found is \"%s\".\n\n", filename);
+            goto reply;
         }
 
+        // Print filename found (DEBUG)
+        filename = (char*) calloc(namelen+1, sizeof(char));
+        strncpy(filename, buffer+fname_pos, namelen);
+        filename[namelen] = '\0';
+        printf("Filename found is \"%s\".\n", filename);
+
+        // Find content-type of file
+        if (getContentType(filename, ctype) < 0) {
+            fprintf(stderr, "ERROR bad file type\n");
+            goto reply;
+        }
+
+        // Find content-length of file
+        clen = getContentLength(filename);
+        if (clen < 0) {
+            fprintf(stderr, "ERROR bad file content-length\n");
+            goto reply;
+        }
+        else // DEBUG
+            printf("Content-Length is %lld bytes.\n", clen);
+
+        reply:
         // Reply to client
         n = send(newsockfd, "I got your message", 18, 0);
         if (n < 0) 
@@ -115,8 +137,14 @@ int main(int argc, char *argv[])
             printf("Exiting...\n");
             break;
         }
+
+        // Free allocated memory
         if (filename)
             free(filename);
+        if (ctype)
+            free(ctype);
+
+        printf("\n");   // DEBUG
     }
     close(sockfd);
     return 0; 
@@ -132,22 +160,64 @@ int main(int argc, char *argv[])
     // Connection: keep-alive
 
 // Find requested filename in HTTP header
-// Returns position of filename and passes back length of the file name
-// Returns -1 on fail
-int parseFilename(char *buffer, int *namelen) {
-    int i;
-    for (i = 0; i < MAXMSGLEN; i++) {
-        // Check for GET
-        if (strncmp(buffer, "GET /", 5) == 0) {
-            // Find length of filename
-            char *start = buffer + i + 5;
-            char *end = strchr(buffer+i+5, ' ');
-            *namelen = end-start;
-            return i + 5;
+//   Success: returns position of filename and passes back length of the file name
+//   Failure: returns -1 (bad header)
+int findFilename(char *buffer, int *namelen) {
+    char *get_pos;
+    // Check for GET
+    if ((get_pos = strstr(buffer, "GET /"))) {
+        // Find length of filename
+        char *start = get_pos + 5;
+        char *end = strchr(get_pos+5, ' ');
+        *namelen = end-start;
+        return (buffer - get_pos + 5);
+    } else
+        return -1;
+}
+
+// Get requested content type of filename to put in HTTP header
+//   Success: returns 0
+//   Failure: return -1 (unrecognized file extension)
+// Possible types:
+//   text/html
+//   image/jpg
+//   image/gif
+int getContentType(char *filename, char *ctype) {
+    // Lookup content-type associated with file extension (if any)
+    char *dot_pos;
+    ctype = (char*) calloc(10, sizeof(char));
+
+    if ((dot_pos = strchr(filename, '.'))) {
+        if (strcmp(dot_pos, ".txt") == 0) {
+            printf("Found text extension.\n");
+            strcpy(ctype, "text/html\0");
+        } else if (strcmp(dot_pos, ".jpg") == 0) {
+            printf("Found jpg extension.\n");
+            strcpy(ctype, "image/jpg\0");
+        } else if (strcmp(dot_pos, ".gif") == 0) {
+            printf("Found gif extension.\n");
+            strcpy(ctype, "image/gif\0");
+        } else {
+            // Unrecognized extension
+            printf("Unrecognized extension\n");
+            free(ctype);
+            ctype = NULL;
+            return -1;
         }
-        // Reached end of buffer (NULL bytes)
-        if (buffer[i] == '\0')
-            break;
+    } else {
+        // No extension in filename, assume text/html
+        printf("No extension found, assuming text/html\n");
+        strcpy(ctype, "text/html\0");
     }
-    return -1;
+    return 0;
+}
+
+// Get requested content length to put in HTTP header
+//   Success: returns 0 and passes back content-type in ctype
+//   Failure: returns -1 (file not found)
+long long getContentLength(char *filename) {
+    struct stat st;
+    if (stat(filename, &st) < 0)
+        return -1;
+    return st.st_size;
 }
