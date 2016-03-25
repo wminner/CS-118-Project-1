@@ -17,7 +17,10 @@
 #define MAXMSGLEN 100000
 #define PORTNUM 9007
 
+// Prototypes
+int parseFilename(char *buffer, int *namelen);
 
+// END Prototypes
 
 void error(char *msg)
 {
@@ -27,10 +30,14 @@ void error(char *msg)
 
 int main(int argc, char *argv[])
 {
-    int sockfd, newsockfd, portno, pid;
+    int sockfd, newsockfd, portno; //pid;
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
     FILE *fp;
+    char *filename = NULL;
+    int namelen = 0;
+    int fname_pos;
+
     fp = fopen("temp", "w");
     ftruncate(fileno(fp), 0);
 
@@ -38,6 +45,10 @@ int main(int argc, char *argv[])
     //    fprintf(stderr,"ERROR, no port provided\n");
     //    exit(1);
     // }
+    if (argc > 1) {
+        fprintf(stderr, "%s accets no additional arguements.\n", argv[0]);
+        exit(1);
+    }
     sockfd = socket(AF_INET, SOCK_STREAM, 0);	//create socket
     if (sockfd < 0) 
         error("ERROR opening socket");
@@ -57,7 +68,7 @@ int main(int argc, char *argv[])
     listen(sockfd,5);	//5 simultaneous connection at most
 
     while(1) {
-        //accept connections
+        // Accept connections
         newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
            
         if (newsockfd < 0) 
@@ -66,27 +77,74 @@ int main(int argc, char *argv[])
         int n;
         char buffer[MAXMSGLEN+1];
     	 
-        memset(buffer, 0, sizeof(buffer));	//reset memory
+        memset(buffer, 0, sizeof(buffer));	// Reset memory
 
-        //read client's message
+        // Read client's message
         n = recv(newsockfd, buffer, sizeof(buffer)-1, 0);
-        if (n < 0) error("ERROR reading from socket");
+        if (n < 0) 
+            error("ERROR reading from socket");
         printf("Here is the message: %s",buffer);
+
+        // Log HTTP requests (DEBUG)
         fp = fopen("temp", "a");
         fwrite(buffer, strlen(buffer), 1, fp);
         fclose(fp);
 
-        //reply to client
-        n = write(newsockfd,"I got your message",18);
-        if (n < 0) error("ERROR writing to socket");
-        close(newsockfd);//close connection
+        // Find filename
+        fname_pos = parseFilename(buffer, &namelen);
+        if (fname_pos < 0)
+            error("Bad request");
+        else {
+            // Print filename found (DEBUG)
+            filename = (char*) calloc(namelen+1, sizeof(char));
+            strncpy(filename, buffer+fname_pos, namelen);
+            filename[namelen] = '\0';
+            printf("Filename found is \"%s\".\n\n", filename);
+        }
+
+        // Reply to client
+        n = send(newsockfd, "I got your message", 18, 0);
+        if (n < 0) 
+            error("ERROR writing to socket");
+        close(newsockfd);// Close connection
 
         if (strcmp(buffer, "exit\n") == 0) {
             printf("Exiting...\n");
             break;
         }
+        if (filename)
+            free(filename);
     }
     close(sockfd);
     return 0; 
 }
 
+// Example HTTP Header (from Firefox)
+    // GET /test.txt HTTP/1.1
+    // Host: 127.0.0.1:9007
+    // User-Agent: Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:45.0) Gecko/20100101 Firefox/45.0
+    // Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+    // Accept-Language: en-US,en;q=0.5
+    // Accept-Encoding: gzip, deflate
+    // Connection: keep-alive
+
+// Find requested filename in HTTP header
+// Returns position of filename and passes back length of the file name
+// Returns < 0 on fail
+int parseFilename(char *buffer, int *namelen) {
+    int i;
+    for (i = 0; i < MAXMSGLEN; i++) {
+        // Check for GET
+        if (strncmp(buffer, "GET /", 5) == 0) {
+            // Find length of filename
+            char *start = buffer + i + 5;
+            char *end = strchr(buffer+i+5, ' ');
+            *namelen = end-start;
+            return i + 5;
+        }
+        // Reached end of buffer (NULL bytes)
+        if (buffer[i] == '\0')
+            break;
+    }
+    return -1;
+}

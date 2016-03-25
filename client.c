@@ -15,6 +15,8 @@
 
 #define PORTNUM 9007
 #define IPADDR "127.0.0.1"
+//#define PORTNUM 80
+//#define IPADDR "http://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png"
 
 void error(char *msg)
 {
