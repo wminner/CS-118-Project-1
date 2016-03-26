@@ -19,12 +19,13 @@
 
 #define MAXMSGLEN 100000
 #define PORTNUM 9007
+#define DATA_PACKET_LEN 1024
 
 // Prototypes
 int findFilename(char *buffer, int *namelen);
 int getContentType(char *filename, char *ctype, char *ctype_str);
 int getContentLength(char *filename, unsigned long long *clen, char **clen_str);
-long long buildResponseString(char *filename, char *ctype, unsigned long long clen, char *clen_str, char **response);
+long long buildResponseHeader(char *ctype, char *clen_str, char **response);
 
 // END Prototypes
 
@@ -117,7 +118,7 @@ int main(int argc, char *argv[])
         if (filename) {
             strncpy(filename, buffer+fname_pos, namelen);
             filename[namelen] = '\0';
-            printf("Filename found is \"%s\".\n", filename);
+            //printf("Filename found is \"%s\".\n", filename);
         } else
             goto error;
 
@@ -133,12 +134,12 @@ int main(int argc, char *argv[])
             fprintf(stderr, "ERROR bad file content-length\n");
             goto error;
         }
-        else // DEBUG
-            printf("Content-Length is %llu bytes.\n", clen);
+        // else // DEBUG
+        //     printf("Content-Length is %llu bytes.\n", clen);
         //printf("DEBUG getContentLength: %s", clen_str);
 
         // Build response string
-        res_len = buildResponseString(filename, ctype_str, clen, clen_str, &response);
+        res_len = buildResponseHeader(ctype_str, clen_str, &response);
         if (res_len < 0) {
             fprintf(stderr, "Error with building response string\n");
             goto error;
@@ -148,38 +149,35 @@ int main(int argc, char *argv[])
             if (n < 0)
                 error("ERROR writing to socket");
 
-            // Send data
-            //FILE *data_fp = NULL;
-            int data_fd = 0;
-            char data[200000];
-            memset(data, 0, sizeof(data));
-            int amtread = 0;
+            // DEBUG log
+            FILE *fp;
+            fp = fopen("log_server", "a");
+            fwrite(response, 1, res_len, fp);
 
-            //data_fp = fopen(filename, "r");
+            int data_fd = 0;
+            char data[DATA_PACKET_LEN];
+            memset(data, 0, sizeof(data));
+            int amtread = 1;
+
             data_fd = open(filename, O_RDONLY);
-            if (data_fd)
-                //amtread = fread(data, 1, clen, data_fp);
-                amtread = read(data_fd, data, clen);
-            // else 
-                // handle error
-            printf("amtread is %d\n", amtread);
-            n = write(newsockfd, data, clen);
+            if (!data_fd)
+                goto error;
+
+            while (amtread > 0) {
+                amtread = read(data_fd, data, DATA_PACKET_LEN);
+
+                //printf("amtread is %d\n", amtread);
+                n = write(newsockfd, data, DATA_PACKET_LEN);
+                // DEBUG log
+                fwrite(data, 1, DATA_PACKET_LEN, fp);
+            }
 
             printf("\nThis is the header: %s", response);
             printf("This is the data: %s\n", data);
 
             // DEBUG log
-            FILE *fp;
-            fp = fopen("log_server", "a");
-            fwrite(response, 1, res_len, fp);
-            fwrite(data, 1, clen, fp);
             fclose(fp);
         }
-
-        // Reply to client
-        // n = send(newsockfd, "I got your message", 18, 0);
-        // if (n < 0) 
-        //     error("ERROR writing to socket");
         
         if (strcmp(buffer, "exit\n") == 0) {
             printf("Exiting...\n");
@@ -202,8 +200,6 @@ int main(int argc, char *argv[])
             free(response);
             response = NULL;
         }
-
-        //printf("\n");   // DEBUG
     }
     close(sockfd);
     return 0; 
@@ -287,7 +283,7 @@ int getContentLength(char *filename, unsigned long long *clen, char **clen_str) 
 
     for (clen_len = 0; temp_len > 0; temp_len /= 10)
         clen_len++;
-    temp_str = calloc(clen_len+18, sizeof(char));
+    temp_str = calloc(clen_len+19, sizeof(char));
     if (temp_str == NULL)
         return -1;
     strcpy(temp_str, "Content-Length: ");
@@ -313,27 +309,16 @@ int getContentLength(char *filename, unsigned long long *clen, char **clen_str) 
 // Assemble HTTP response from file properties
 //   Success: returns length of response and passes back response string in response
 //   Failure: return -1
-long long buildResponseString(char *filename, char *ctype_str, unsigned long long clen, char *clen_str, char **response) {
+long long buildResponseHeader(char *ctype_str, char *clen_str, char **response) {
 
     char *first = "HTTP/1.1 200 OK\r\n";
     char *date = "Date: Fri, 25 Mar 2016 19:42:42 GMT\r\n";
     char *last_modified = "Last-Modified: Fri, 04 Sep 2015 22:33:08 GMT\r\n";
     char *spacer = "\r\n";
-    //char data[200000];
     char *temp_response;
-    //int data_fd = 0;
-    //int amtread = 0;
 
     // Determine how much memory response should be
-    int response_len = 127 + strlen(clen_str);// + clen;
-
-    // //Get data from file
-    // data_fd = open(filename, O_RDONLY);
-    // if (data_fd)
-    //     //amtread = read(data_fd, data, clen);
-    //     read(data_fd, data, clen);
-    // else
-    //     return -1;
+    int response_len = 127 + strlen(clen_str);
 
     // Allocate memory for response and build response string
     temp_response = calloc(response_len+1, sizeof(char));
