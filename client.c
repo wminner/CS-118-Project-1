@@ -25,7 +25,7 @@ Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n\
 Accept-Language: en-US,en;q=0.5\r\n\
 Accept-Encoding: gzip, deflate\r\n\
 Connection: keep-alive\r\n\
-\n"
+\r\n"
 
 void error(char *msg)
 {
