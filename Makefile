@@ -1,8 +1,8 @@
 # CS 118 Project 1 Makefile
 
 CC = gcc
-#CFLAGS = -O4 -g -Wall -Wextra -Werror -Wno-unused
-CFLAGS = -pthread -g -Wall -Wextra
+CFLAGS = -O4 -g -Wall -Wextra -Werror -Wno-unused
+#CFLAGS = -pthread -g -Wall -Wextra
 DIR = proj1-$(USER)
 
 CLIENT_SOURCES = client.c

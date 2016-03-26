@@ -2,12 +2,28 @@ CS 118 - Project 1
 Wesley Minner
 Professor Reiher, Winter 2016
 
+***Note***
+I audited this class, so this project was completed for my own benefit and may
+not include all requirements from the spec (like the pdf report).
+
+================================================================================
+
 Makefile functionality:
 * make
 * make clean
 
+
 server functionality:
-* exit: exit gracefully
+* Forks children to do work
+* Handles these file types
+    .txt
+	.html
+	.jpg
+	.png
+	.gif
+* Can find files placed in folders if below server's root folder
+* Does not attempt to use accurate file time properties
+
 
 client functionality:
-* exit: exit gracefully
+* For testing and gathering data only...

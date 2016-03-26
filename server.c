@@ -44,7 +44,8 @@ int main(int argc, char *argv[]) {
     // Open and clear debug log for logging HTTP requests/responses
     if (DEBUG_LOG) {
         fp = fopen("log_server", "w");
-        ftruncate(fileno(fp), 0);
+        if (ftruncate(fileno(fp), 0) < 0)
+            fprintf(stderr, "ERROR ftruncate: %s\n", strerror(errno));
     }
 
     // Usage
@@ -119,7 +120,7 @@ void dowork(int sock) {
     int fname_pos;                  // Position of filename in HTTP request
     int namelen = 0;                // Length of filename
     long long res_len = 0;          // Response length
-    
+
     int n;
     char buffer[MAXMSGLEN];
 
