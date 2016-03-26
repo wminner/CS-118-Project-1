@@ -1,21 +1,16 @@
-/* A simple server in the internet domain using TCP
-   The port number is passed as an argument 
-   This version runs forever, forking off a separate 
-   process for each connection
-*/
 #include <stdio.h>
-#include <sys/types.h>   // definitions of a number of data types used in socket.h and netinet/in.h
-#include <sys/socket.h>  // definitions of structures needed for sockets, e.g. sockaddr
-#include <netinet/in.h>  // constants and structures needed for internet domain addresses, e.g. sockaddr_in
+#include <sys/types.h>  // definitions of a number of data types used in socket.h and netinet/in.h
+#include <sys/socket.h> // sockets, e.g. sockaddr
+#include <netinet/in.h> // sockaddr_in
 #include <stdlib.h>
 #include <strings.h>
-#include <string.h>
-#include <sys/wait.h>	/* for the waitpid() system call */
-#include <sys/stat.h>
-#include <signal.h>	/* signal name macros, and the kill() prototype */
-#include <unistd.h>
-#include <fcntl.h>  // Open
-#include <errno.h>
+#include <string.h>     // strcmp, strcpy
+#include <sys/wait.h>	// waitpid
+#include <sys/stat.h>   // stat
+#include <signal.h>	    // signal name macros
+#include <unistd.h>     // NULL
+#include <fcntl.h>      // open
+#include <errno.h>      // errno
 
 #define MAXMSGLEN 100000
 #define PORTNUM 9007
@@ -26,7 +21,6 @@ int findFilename(char *buffer, int *namelen);
 int getContentType(char *filename, char *ctype, char *ctype_str);
 int getContentLength(char *filename, unsigned long long *clen, char **clen_str);
 long long buildResponseHeader(char *ctype, char *clen_str, char **response);
-
 // END Prototypes
 
 void error(char *msg)
@@ -40,24 +34,27 @@ int main(int argc, char *argv[])
     int sockfd, newsockfd, portno; //pid;
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
-    FILE *fp;                       // File pointer for logging HTTP requests
     char *filename = NULL;          // Name of file requested
     char ctype[10];                 // Content-Type
     char ctype_str[26];             // Content-Type string (for response)
     char *clen_str = NULL;          // Content-Length string
     char *response = NULL;          // response of HTTP response
     unsigned long long clen = 0;    // Content-Length (number form)
-    int fname_pos;                  // Position of filename in HTTP header
+    int fname_pos;                  // Position of filename in HTTP request
     int namelen = 0;                // Length of filename
     long long res_len = 0;          // Response length
+    int DEBUG_LOG = 0;              // Logs requests and reponses to a file if 1
+    FILE *fp;                       // File pointer for logging HTTP requests/responses
 
-    // Open and clear temp file for logging HTTP requests
-    fp = fopen("log_server", "w");
-    ftruncate(fileno(fp), 0);
+    // Open and clear debug log for logging HTTP requests/responses
+    if (DEBUG_LOG) {
+        fp = fopen("log_server", "w");
+        ftruncate(fileno(fp), 0);
+    }
 
     // Usage
-    if (argc > 1) {
-        fprintf(stderr, "%s accets no additional arguements.\n", argv[0]);
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s [PORT]\n", argv[0]);
         exit(1);
     }
 
@@ -72,7 +69,8 @@ int main(int argc, char *argv[])
     memset((char *) &serv_addr, 0, sizeof(serv_addr));	
     
     // Fill in address info
-    portno = PORTNUM;
+    //portno = PORTNUM;
+    portno = atoi(argv[1]);
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(portno);
@@ -99,12 +97,14 @@ int main(int argc, char *argv[])
         n = recv(newsockfd, buffer, sizeof(buffer)-1, 0);
         if (n < 0) 
             error("ERROR reading from socket");
-        printf("Here is the request: %s",buffer);
+        printf("REQUEST: %s",buffer);
 
-        // Log HTTP requests (DEBUG)
-        fp = fopen("log_server", "a");
-        fwrite(buffer, strlen(buffer), 1, fp);
-        fclose(fp);
+        // DEBUG log
+        if (DEBUG_LOG) {
+            fp = fopen("log_server", "a");
+            fwrite(buffer, strlen(buffer), 1, fp);
+            fclose(fp);
+        }
 
         // Find filename indices
         fname_pos = findFilename(buffer, &namelen);
@@ -118,30 +118,25 @@ int main(int argc, char *argv[])
         if (filename) {
             strncpy(filename, buffer+fname_pos, namelen);
             filename[namelen] = '\0';
-            //printf("Filename found is \"%s\".\n", filename);
         } else
             goto error;
 
         // Find content-type of file
         if (getContentType(filename, ctype, ctype_str) < 0) {
-            fprintf(stderr, "ERROR bad file type\n");
+            fprintf(stderr, "ERROR unrecognized file type\n");
             goto error;
         }
-        //printf("DEBUG getContentType: %s", ctype_str);
 
         // Find content-length of file
         if (getContentLength(filename, &clen, &clen_str) < 0) {
-            fprintf(stderr, "ERROR bad file content-length\n");
+            fprintf(stderr, "ERROR file not found\n");
             goto error;
         }
-        // else // DEBUG
-        //     printf("Content-Length is %llu bytes.\n", clen);
-        //printf("DEBUG getContentLength: %s", clen_str);
 
         // Build response string
         res_len = buildResponseHeader(ctype_str, clen_str, &response);
         if (res_len < 0) {
-            fprintf(stderr, "Error with building response string\n");
+            fprintf(stderr, "ERROR with building response string\n");
             goto error;
         } else {
             // Send header
@@ -150,9 +145,11 @@ int main(int argc, char *argv[])
                 error("ERROR writing to socket");
 
             // DEBUG log
-            FILE *fp;
-            fp = fopen("log_server", "a");
-            fwrite(response, 1, res_len, fp);
+            if (DEBUG_LOG) {
+                FILE *fp;
+                fp = fopen("log_server", "a");
+                fwrite(response, 1, res_len, fp);
+            }
 
             int data_fd = 0;
             char data[DATA_PACKET_LEN];
@@ -165,27 +162,23 @@ int main(int argc, char *argv[])
 
             while (amtread > 0) {
                 amtread = read(data_fd, data, DATA_PACKET_LEN);
-
-                //printf("amtread is %d\n", amtread);
                 n = write(newsockfd, data, DATA_PACKET_LEN);
                 // DEBUG log
-                fwrite(data, 1, DATA_PACKET_LEN, fp);
+                if (DEBUG_LOG) {
+                    fwrite(data, 1, DATA_PACKET_LEN, fp);
+                }
             }
-
-            printf("\nThis is the header: %s", response);
-            printf("This is the data: %s\n", data);
+            printf("RESPONSE: %s", response);
 
             // DEBUG log
-            fclose(fp);
-        }
-        
-        if (strcmp(buffer, "exit\n") == 0) {
-            printf("Exiting...\n");
-            break;
+            if (DEBUG_LOG) {
+                fwrite("\n\n", 1, 2, fp);
+                fclose(fp);
+            }
         }
 
         error:
-        close(newsockfd);// Close connection
+        close(newsockfd);   // Close connection
 
         // Free allocated memory
         if (filename != NULL) {
@@ -233,10 +226,11 @@ int findFilename(char *buffer, int *namelen) {
 // Get requested content type of filename to put in HTTP response
 //   Success: returns 0 and passes back content-type in ctype
 //   Failure: return -1 (unrecognized file extension)
-// Possible types:
+// Supported types:
 //   text/html
 //   image/jpg
 //   image/gif
+//   image/png
 int getContentType(char *filename, char *ctype, char *ctype_str) {
     // Lookup content-type associated with file extension (if any)
     char *dot_pos;
@@ -295,7 +289,7 @@ int getContentLength(char *filename, unsigned long long *clen, char **clen_str) 
     return 0;
 }
 
-// Example HTTP header response
+// Example HTTP header response                         // Number of characters
     // HTTP/1.1 200 OK\r\n                              // 17    
     // Content-Type: image/jpg\r\n                      // 25
     // Date: Fri, 25 Mar 2016 19:42:42 GMT\r\n          // 37
@@ -304,10 +298,10 @@ int getContentLength(char *filename, unsigned long long *clen, char **clen_str) 
     // \r\n                                             // 2
     // [Data]                                           // clen
 
-// response_len = 145 + len(clen) + clen
+// length of response header = 127 + strlen(clen)
 
 // Assemble HTTP response from file properties
-//   Success: returns length of response and passes back response string in response
+//   Success: returns length of response and passes back header string in response
 //   Failure: return -1
 long long buildResponseHeader(char *ctype_str, char *clen_str, char **response) {
 
