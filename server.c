@@ -149,23 +149,31 @@ int main(int argc, char *argv[])
                 error("ERROR writing to socket");
 
             // Send data
-            // FILE *data_fp = NULL;
-            // int data_fd = 0;
-            // char *data[200000];
-            // memset(data, 0, sizeof(data));
-            // int amtread = 0;
+            //FILE *data_fp = NULL;
+            int data_fd = 0;
+            char data[200000];
+            memset(data, 0, sizeof(data));
+            int amtread = 0;
 
-            // data_fp = fopen(filename, "r");
-            // data_fd = open(filename, O_RDONLY);
-            // if (data_fp)
-            //     //amtread = fread(data, clen, 1, data_fp);
-            //     amtread = read(data_fd, data, clen);
-            // // else 
-            //     // handle error
-            // printf("amtread is %d\n", amtread);
-            // n = send(newsockfd, data, clen, 0);
+            //data_fp = fopen(filename, "r");
+            data_fd = open(filename, O_RDONLY);
+            if (data_fd)
+                //amtread = fread(data, 1, clen, data_fp);
+                amtread = read(data_fd, data, clen);
+            // else 
+                // handle error
+            printf("amtread is %d\n", amtread);
+            n = write(newsockfd, data, clen);
 
-            printf("\nThis is the response: %s", response);
+            printf("\nThis is the header: %s", response);
+            printf("This is the data: %s\n", data);
+
+            // DEBUG log
+            FILE *fp;
+            fp = fopen("log_server", "a");
+            fwrite(response, 1, res_len, fp);
+            fwrite(data, 1, clen, fp);
+            fclose(fp);
         }
 
         // Reply to client
@@ -311,21 +319,21 @@ long long buildResponseString(char *filename, char *ctype_str, unsigned long lon
     char *date = "Date: Fri, 25 Mar 2016 19:42:42 GMT\r\n";
     char *last_modified = "Last-Modified: Fri, 04 Sep 2015 22:33:08 GMT\r\n";
     char *spacer = "\r\n";
-    char data[200000];
+    //char data[200000];
     char *temp_response;
-    int data_fd = 0;
+    //int data_fd = 0;
     //int amtread = 0;
 
     // Determine how much memory response should be
-    int response_len = 127 + strlen(clen_str) + clen;
+    int response_len = 127 + strlen(clen_str);// + clen;
 
-    //Get data from file
-    data_fd = open(filename, O_RDONLY);
-    if (data_fd)
-        //amtread = read(data_fd, data, clen);
-        read(data_fd, data, clen);
-    else
-        return -1;
+    // //Get data from file
+    // data_fd = open(filename, O_RDONLY);
+    // if (data_fd)
+    //     //amtread = read(data_fd, data, clen);
+    //     read(data_fd, data, clen);
+    // else
+    //     return -1;
 
     // Allocate memory for response and build response string
     temp_response = calloc(response_len+1, sizeof(char));
@@ -344,18 +352,8 @@ long long buildResponseString(char *filename, char *ctype_str, unsigned long lon
         strcpy(temp_response + strlen(temp_response), clen_str);
         // Append spacer
         strcpy(temp_response + strlen(temp_response), spacer);
-        // Append data
-        strcpy(temp_response + strlen(temp_response), data);
-        temp_response[response_len] = '\0';
     }
 
     *response = temp_response;
-
-    // DEBUG log
-    FILE *fp;
-    fp = fopen("log_server", "a");
-    fwrite(*response, strlen(*response), 1, fp);
-    fclose(fp);
-
     return response_len;
 }
