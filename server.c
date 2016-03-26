@@ -12,7 +12,7 @@
 #include <fcntl.h>      // open
 #include <errno.h>      // errno
 
-#define MAXMSGLEN 100000
+#define MAXMSGLEN 1024
 #define PORTNUM 9007
 #define DATA_PACKET_LEN 1024
 
@@ -21,30 +21,25 @@ int findFilename(char *buffer, int *namelen);
 int getContentType(char *filename, char *ctype, char *ctype_str);
 int getContentLength(char *filename, unsigned long long *clen, char **clen_str);
 long long buildResponseHeader(char *ctype, char *clen_str, char **response);
+void handle_sigchld(int sig);
+void dowork(int sock);
 // END Prototypes
 
-void error(char *msg)
-{
+// Globals
+int DEBUG_LOG = 0;          // Logs requests and reponses to a file if 1
+FILE *fp;                   // File pointer for logging HTTP requests/responses
+// END Globals
+
+void error(char *msg) {
     perror(msg);
     exit(1);
 }
 
-int main(int argc, char *argv[])
-{
-    int sockfd, newsockfd, portno; //pid;
+int main(int argc, char *argv[]) {
+    int sockfd, newsockfd, portno, pid;
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
-    char *filename = NULL;          // Name of file requested
-    char ctype[10];                 // Content-Type
-    char ctype_str[26];             // Content-Type string (for response)
-    char *clen_str = NULL;          // Content-Length string
-    char *response = NULL;          // response of HTTP response
-    unsigned long long clen = 0;    // Content-Length (number form)
-    int fname_pos;                  // Position of filename in HTTP request
-    int namelen = 0;                // Length of filename
-    long long res_len = 0;          // Response length
-    int DEBUG_LOG = 0;              // Logs requests and reponses to a file if 1
-    FILE *fp;                       // File pointer for logging HTTP requests/responses
+    struct sigaction sa;            // sigchld handler
 
     // Open and clear debug log for logging HTTP requests/responses
     if (DEBUG_LOG) {
@@ -65,10 +60,8 @@ int main(int argc, char *argv[])
     if (setsockopt(sockfd, SOL_SOCKET, (SO_REUSEADDR|SO_REUSEPORT), &(int){ 1 }, sizeof(int)) < 0)
         error("setsockopt(SO_REUSEADDR) failed");
 
-    // Reset memory
+    // Reset memory and fill in address info
     memset((char *) &serv_addr, 0, sizeof(serv_addr));	
-    
-    // Fill in address info
     //portno = PORTNUM;
     portno = atoi(argv[1]);
     serv_addr.sin_family = AF_INET;
@@ -80,122 +73,160 @@ int main(int argc, char *argv[])
 
     listen(sockfd,5);	// 5 simultaneous connection at most
 
+    // Set up sigchld handler
+    sa.sa_handler = &handle_sigchld;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+    if (sigaction(SIGCHLD, &sa, 0) == -1) {
+        error("ERROR sigchld handler");
+    }
+
     while(1) {
         // Accept connections
+        clilen = sizeof(cli_addr);
         newsockfd = accept(sockfd, (struct sockaddr *) &cli_addr, &clilen);
            
         if (newsockfd < 0) 
             error("ERROR on accept");
 
-        int n;
-        char buffer[MAXMSGLEN+1];
+        // Fork child for doing actual work
+        pid = fork();
+        if (pid < 0)
+            error("Error on fork");
 
-        // Reset memory
-        memset(buffer, 0, sizeof(buffer));	
-
-        // Read client's message
-        n = recv(newsockfd, buffer, sizeof(buffer)-1, 0);
-        if (n < 0) 
-            error("ERROR reading from socket");
-        printf("REQUEST: %s",buffer);
-
-        // DEBUG log
-        if (DEBUG_LOG) {
-            fp = fopen("log_server", "a");
-            fwrite(buffer, strlen(buffer), 1, fp);
-            fclose(fp);
-        }
-
-        // Find filename indices
-        fname_pos = findFilename(buffer, &namelen);
-        if (fname_pos < 0) {
-            fprintf(stderr, "ERROR bad request\n");
-            goto error;
-        }
-
-        // Exact filename using indices
-        filename = calloc(namelen+1, sizeof(char));
-        if (filename) {
-            strncpy(filename, buffer+fname_pos, namelen);
-            filename[namelen] = '\0';
+        // Child fork
+        if (pid == 0) {
+            close(sockfd);
+            dowork(newsockfd);
+            exit(0);
+        // Parent fork
         } else
-            goto error;
-
-        // Find content-type of file
-        if (getContentType(filename, ctype, ctype_str) < 0) {
-            fprintf(stderr, "ERROR unrecognized file type\n");
-            goto error;
-        }
-
-        // Find content-length of file
-        if (getContentLength(filename, &clen, &clen_str) < 0) {
-            fprintf(stderr, "ERROR file not found\n");
-            goto error;
-        }
-
-        // Build response string
-        res_len = buildResponseHeader(ctype_str, clen_str, &response);
-        if (res_len < 0) {
-            fprintf(stderr, "ERROR with building response string\n");
-            goto error;
-        } else {
-            // Send header
-            n = write(newsockfd, response, res_len);
-            if (n < 0)
-                error("ERROR writing to socket");
-
-            // DEBUG log
-            if (DEBUG_LOG) {
-                FILE *fp;
-                fp = fopen("log_server", "a");
-                fwrite(response, 1, res_len, fp);
-            }
-
-            int data_fd = 0;
-            char data[DATA_PACKET_LEN];
-            memset(data, 0, sizeof(data));
-            int amtread = 1;
-
-            data_fd = open(filename, O_RDONLY);
-            if (!data_fd)
-                goto error;
-
-            while (amtread > 0) {
-                amtread = read(data_fd, data, DATA_PACKET_LEN);
-                n = write(newsockfd, data, DATA_PACKET_LEN);
-                // DEBUG log
-                if (DEBUG_LOG) {
-                    fwrite(data, 1, DATA_PACKET_LEN, fp);
-                }
-            }
-            printf("RESPONSE: %s", response);
-
-            // DEBUG log
-            if (DEBUG_LOG) {
-                fwrite("\n\n", 1, 2, fp);
-                fclose(fp);
-            }
-        }
-
-        error:
-        close(newsockfd);   // Close connection
-
-        // Free allocated memory
-        if (filename != NULL) {
-            free(filename);
-            filename = NULL;
-        }
-        if (clen_str != NULL) {
-            free(clen_str);
-            clen_str = NULL;
-        }
-        if (response) {
-            free(response);
-            response = NULL;
-        }
+            close(newsockfd);   // Close socket as parent doesn't use it
     }
     close(sockfd);
     return 0; 
+}
+
+// Child's work receiving and responding to HTTP requests
+// Argument: socket for which it will be receiving and sending data on
+void dowork(int sock) {
+    char *filename = NULL;          // Name of file requested
+    char ctype[10];                 // Content-Type
+    char ctype_str[26];             // Content-Type string (for response)
+    char *clen_str = NULL;          // Content-Length string
+    char *response = NULL;          // response of HTTP response
+    unsigned long long clen = 0;    // Content-Length (number form)
+    int fname_pos;                  // Position of filename in HTTP request
+    int namelen = 0;                // Length of filename
+    long long res_len = 0;          // Response length
+    
+    int n;
+    char buffer[MAXMSGLEN];
+
+    // Reset memory
+    memset(buffer, 0, sizeof(buffer));	
+
+    // Read client's message
+    n = read(sock, buffer, MAXMSGLEN);
+    if (n < 0) 
+        error("ERROR reading from socket");
+    printf("REQUEST: %s",buffer);
+
+    // DEBUG log
+    if (DEBUG_LOG) {
+        fp = fopen("log_server", "a");
+        fwrite(buffer, strlen(buffer), 1, fp);
+        fclose(fp);
+    }
+
+    // Find filename indices
+    fname_pos = findFilename(buffer, &namelen);
+    if (fname_pos < 0) {
+        fprintf(stderr, "ERROR bad request\n");
+        goto error;
+    }
+
+    // Exact filename using indices
+    filename = calloc(namelen+1, sizeof(char));
+    if (filename) {
+        strncpy(filename, buffer+fname_pos, namelen);
+        filename[namelen] = '\0';
+    } else
+        goto error;
+
+    // Find content-type of file
+    if (getContentType(filename, ctype, ctype_str) < 0) {
+        fprintf(stderr, "ERROR unrecognized file type\n");
+        goto error;
+    }
+
+    // Find content-length of file
+    if (getContentLength(filename, &clen, &clen_str) < 0) {
+        fprintf(stderr, "ERROR file not found\n");
+        goto error;
+    }
+
+    // Build response string
+    res_len = buildResponseHeader(ctype_str, clen_str, &response);
+    if (res_len < 0) {
+        fprintf(stderr, "ERROR with building response string\n");
+        goto error;
+    } else {
+        // Send header
+        n = write(sock, response, res_len);
+        if (n < 0)
+            error("ERROR writing to socket");
+
+        // DEBUG log
+        if (DEBUG_LOG) {
+            FILE *fp;
+            fp = fopen("log_server", "a");
+            fwrite(response, 1, res_len, fp);
+        }
+
+        int data_fd = 0;
+        char data[DATA_PACKET_LEN];
+        memset(data, 0, sizeof(data));
+        int amtread = 1;
+
+        data_fd = open(filename, O_RDONLY);
+        if (!data_fd)
+            goto error;
+
+        while (amtread > 0) {
+            amtread = read(data_fd, data, DATA_PACKET_LEN);
+            n = write(sock, data, DATA_PACKET_LEN);
+            // DEBUG log
+            if (DEBUG_LOG) {
+                fwrite(data, 1, DATA_PACKET_LEN, fp);
+            }
+        }
+        close(data_fd);
+        printf("RESPONSE: %s", response);
+
+        // DEBUG log
+        if (DEBUG_LOG) {
+            fwrite("\n\n", 1, 2, fp);
+            fclose(fp);
+        }
+    }
+
+    error:
+    close(sock);   // Close connection
+
+    // Free allocated memory
+    if (filename != NULL) {
+        free(filename);
+        filename = NULL;
+    }
+    if (clen_str != NULL) {
+        free(clen_str);
+        clen_str = NULL;
+    }
+    if (response) {
+        free(response);
+        response = NULL;
+    }
 }
 
 // Example HTTP header request (from Firefox)
@@ -335,4 +366,13 @@ long long buildResponseHeader(char *ctype_str, char *clen_str, char **response) 
 
     *response = temp_response;
     return response_len;
+}
+
+void handle_sigchld(int sig) {
+    (void)sig;  // Silence compiler warning
+    // Save and restore errno in case waitpid changes it
+    // (which may mess with other functions not expecting async signals)
+    int save_errno = errno;
+    while (waitpid((pid_t)(-1), 0, WNOHANG) > 0);
+    errno = save_errno;
 }
