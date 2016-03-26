@@ -98,7 +98,7 @@ int main(int argc, char *argv[])
         n = recv(newsockfd, buffer, sizeof(buffer)-1, 0);
         if (n < 0) 
             error("ERROR reading from socket");
-        printf("Here is the message: %s",buffer);
+        printf("Here is the request: %s",buffer);
 
         // Log HTTP requests (DEBUG)
         fp = fopen("log_server", "a");
@@ -126,7 +126,7 @@ int main(int argc, char *argv[])
             fprintf(stderr, "ERROR bad file type\n");
             goto error;
         }
-        printf("DEBUG getContentType: %s", ctype_str);
+        //printf("DEBUG getContentType: %s", ctype_str);
 
         // Find content-length of file
         if (getContentLength(filename, &clen, &clen_str) < 0) {
@@ -135,18 +135,37 @@ int main(int argc, char *argv[])
         }
         else // DEBUG
             printf("Content-Length is %llu bytes.\n", clen);
-        printf("DEBUG getContentLength: %s", clen_str);
+        //printf("DEBUG getContentLength: %s", clen_str);
 
         // Build response string
         res_len = buildResponseString(filename, ctype_str, clen, clen_str, &response);
         if (res_len < 0) {
-            fprintf(stderr, "Error with building reply string\n");
+            fprintf(stderr, "Error with building response string\n");
             goto error;
         } else {
-            n = send(newsockfd, response, res_len, 0);
+            // Send header
+            n = write(newsockfd, response, res_len);
             if (n < 0)
                 error("ERROR writing to socket");
-            printf("\nThis is what went out: %s\n", response);
+
+            // Send data
+            // FILE *data_fp = NULL;
+            // int data_fd = 0;
+            // char *data[200000];
+            // memset(data, 0, sizeof(data));
+            // int amtread = 0;
+
+            // data_fp = fopen(filename, "r");
+            // data_fd = open(filename, O_RDONLY);
+            // if (data_fp)
+            //     //amtread = fread(data, clen, 1, data_fp);
+            //     amtread = read(data_fd, data, clen);
+            // // else 
+            //     // handle error
+            // printf("amtread is %d\n", amtread);
+            // n = send(newsockfd, data, clen, 0);
+
+            printf("\nThis is the response: %s", response);
         }
 
         // Reply to client
@@ -163,16 +182,20 @@ int main(int argc, char *argv[])
         close(newsockfd);// Close connection
 
         // Free allocated memory
-        if (filename) {
+        if (filename != NULL) {
             free(filename);
             filename = NULL;
         }
-        if (clen_str) {
+        if (clen_str != NULL) {
             free(clen_str);
             clen_str = NULL;
         }
+        if (response) {
+            free(response);
+            response = NULL;
+        }
 
-        printf("\n");   // DEBUG
+        //printf("\n");   // DEBUG
     }
     close(sockfd);
     return 0; 
@@ -213,41 +236,24 @@ int findFilename(char *buffer, int *namelen) {
 int getContentType(char *filename, char *ctype, char *ctype_str) {
     // Lookup content-type associated with file extension (if any)
     char *dot_pos;
-    // ctype = calloc(10, sizeof(char));
-    // ctype_str = calloc(26, sizeof(char));
-    // if (ctype == NULL || ctype_str == NULL)
-    //     return -1;
-
-    // DEBUG
-    // *ctype_str = filename;
-    // printf("Test %s\n", *ctype_str);
 
     strcpy(ctype_str, "Content-Type: ");
 
     if ((dot_pos = strchr(filename, '.'))) {
         if (strcmp(dot_pos, ".txt") == 0 || strcmp(dot_pos, ".html") == 0) {
-            printf("Found text extension.\n");
             strcpy(ctype, "text/html");
         } else if (strcmp(dot_pos, ".jpg") == 0) {
-            printf("Found jpg extension.\n");
             strcpy(ctype, "image/jpg");
         } else if (strcmp(dot_pos, ".png") == 0) {
             strcpy(ctype, "image/png");
         } else if (strcmp(dot_pos, ".gif") == 0) {
-            printf("Found gif extension.\n");
             strcpy(ctype, "image/gif");
         } else {
             // Unrecognized extension
-            printf("Unrecognized extension\n");
-            // free(*ctype);
-            // free(*ctype_str);
-            // *ctype = NULL;
-            // *ctype_str = NULL;
             return -1;
         }
     } else {
         // No extension in filename, assume text/html
-        printf("No extension found, assuming text/html\n");
         strcpy(ctype, "text/html\0");
     }
     strcpy(ctype_str+strlen(ctype_str), ctype);
@@ -305,25 +311,24 @@ long long buildResponseString(char *filename, char *ctype_str, unsigned long lon
     char *date = "Date: Fri, 25 Mar 2016 19:42:42 GMT\r\n";
     char *last_modified = "Last-Modified: Fri, 04 Sep 2015 22:33:08 GMT\r\n";
     char *spacer = "\r\n";
-    //char *content_type;
-    //char *content_length;
     char data[200000];
     char *temp_response;
-    FILE *data_fp = NULL;
-    int amtread = 0;
+    int data_fd = 0;
+    //int amtread = 0;
 
     // Determine how much memory response should be
     int response_len = 127 + strlen(clen_str) + clen;
 
-    // Get data from file
-    data_fp = fopen(filename, "r");
-    if (data_fp)
-        amtread = fread(data, 200000, 1, data_fp);
+    //Get data from file
+    data_fd = open(filename, O_RDONLY);
+    if (data_fd)
+        //amtread = read(data_fd, data, clen);
+        read(data_fd, data, clen);
     else
         return -1;
 
     // Allocate memory for response and build response string
-    temp_response = malloc((response_len+1)*sizeof(char));
+    temp_response = calloc(response_len+1, sizeof(char));
     if (temp_response == NULL)
         return -1;
     else {
@@ -341,8 +346,16 @@ long long buildResponseString(char *filename, char *ctype_str, unsigned long lon
         strcpy(temp_response + strlen(temp_response), spacer);
         // Append data
         strcpy(temp_response + strlen(temp_response), data);
+        temp_response[response_len] = '\0';
     }
 
     *response = temp_response;
-    return 0;
+
+    // DEBUG log
+    FILE *fp;
+    fp = fopen("log_server", "a");
+    fwrite(*response, strlen(*response), 1, fp);
+    fclose(fp);
+
+    return response_len;
 }
